@@ -379,14 +379,15 @@ let cPct=null,cMonth=null,cBudget=null,cTend=null,cDistrib=null,cProd=null,cChar
 const expose = (fns) => fns.forEach(([k,v]) => window[k]=v);
 expose([
   ['doAuth', doAuth],
-  ['toggleTermine', toggleTermine],
-  ['dureeRestante', dureeRestante], ['setAuthMode', setAuthMode], ['doLogout', doLogout],
+  ['toggleTermine', toggleTermine], ['setAuthMode', setAuthMode], ['doLogout', doLogout],
   ['goTab', goTab], ['openModal', openModal], ['closeModal', closeModal],
   ['saveChantier', saveChantier], ['updateField', updateField], ['updateMois', updateMois],
   ['deleteChantier', deleteChantier], ['renderTable', renderTable], ['loadHeures', loadHeures],
   ['exportExcel', exportExcel], ['dlTemplate', dlTemplate],
   ['importExcel', importExcel], ['importAlobees', importAlobees],
   ['setProdView', setProdView],
+  ['toggleTermine', toggleTermine],
+  ['dureeRestante', dureeRestante],
 ]);
 
 // ── AUTH ──
@@ -500,12 +501,6 @@ async function loadAlobees() {
 async function loadChantiers() {
   const { data } = await sb.from('chantiers').select('*').order('code', { ascending: true });
   chantiers = data || [];
-  const { data: allH } = await sb.from('heures_mois').select('*');
-  allHeuresMap = {};
-  (allH||[]).forEach(r => {
-    if (!allHeuresMap[r.chantier_id]) allHeuresMap[r.chantier_id] = {};
-    allHeuresMap[r.chantier_id][`${r.mois}_${r.annee}`] = r.heures;
-  });
   renderAll();
 }
 
@@ -523,8 +518,8 @@ async function loadHeures() {
 // ── CALCULATIONS ──
 const getH   = c => Array.from({length:12},(_,i)=>(heuresMap[c.id]||{})[i]||0);
 const budgetH = c => (c.budget||0)/TAUX;
-const totalHAll = c => Object.values(allHeuresMap[c.id]||{}).reduce((a,b)=>a+b,0);
 const totalH  = c => getH(c).reduce((a,b)=>a+b,0);
+const totalHAll = c => Object.values(allHeuresMap[c.id]||{}).reduce((a,b)=>a+b,0);
 const restH   = c => Math.max(0, budgetH(c)-totalHAll(c));
 const pct     = c => { const b=budgetH(c); return b>0?Math.min(100,Math.round(totalH(c)/b*100)):0; };
 const fmt     = n => Math.round(n).toLocaleString('fr-FR');
@@ -550,6 +545,7 @@ function ratioCell(c) {
 function renderAll() { renderMetrics(); renderTable(); renderMonthTable(); }
 
 function renderMetrics() {
+  const actifs=chantiers.filter(c=>!c.termine);
   const tB=chantiers.reduce((a,c)=>a+(c.budget||0),0);
   const tBH=chantiers.reduce((a,c)=>a+budgetH(c),0);
   const tH=chantiers.reduce((a,c)=>a+totalH(c),0);
@@ -673,6 +669,27 @@ async function toggleTermine(id, checked) {
   showToast(checked ? 'Chantier marqué terminé ✅' : 'Chantier réouvert 🔄');
 }
 
+
+// ── TERMINÉ & DURÉE ──
+function dureeRestante(c) {
+  if (c.termine) return '<span style="color:var(--green);font-size:11px">✅ Terminé</span>';
+  const rh = restH(c);
+  if (rh <= 0) return '<span style="color:var(--green);font-size:11px">✅ Fini</span>';
+  const ouv = c.ouvriers || 1;
+  const jours = rh / (ouv * 8);
+  if (jours < 1) return '<span style="color:var(--amber);font-size:11px">&lt;1j</span>';
+  return '<span style="font-size:12px">'+jours.toFixed(1)+' j</span>';
+}
+
+async function toggleTermine(id, checked) {
+  const { error } = await sb.from('chantiers').update({ termine: checked }).eq('id', id);
+  if (error) { showToast('Erreur : ' + error.message); return; }
+  const c = chantiers.find(x => x.id === id);
+  if (c) c.termine = checked;
+  renderAll();
+  showToast(checked ? 'Chantier marqué terminé ✅' : 'Chantier réouvert 🔄');
+}
+
 // ── CRUD ──
 async function updateField(id, field, val) {
   const v = isNaN(val) || field==='code'||field==='code_client'||field==='donneur'||field==='adresse'||field==='ville' ? val : (parseFloat(val)||0);
@@ -687,7 +704,7 @@ async function updateMois(id, mois, val) {
   if(!heuresMap[id]) heuresMap[id]={};
   heuresMap[id][mois]=h;
   if(!allHeuresMap[id]) allHeuresMap[id]={};
-  allHeuresMap[id][`${mois}_${currentAnnee}`]=h;
+  allHeuresMap[id][mois+'_'+currentAnnee]=h;
   renderMetrics(); renderTable(); showToast('✓');
 }
 
@@ -740,13 +757,10 @@ async function saveChantier() {
 
 // ── TABS ──
 function goTab(name) {
-  document.querySelectorAll('.nav-item').forEach(t=>t.classList.remove('active'));
+  document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
   document.querySelectorAll('.section').forEach(s=>s.classList.remove('active'));
-  const navEl=document.querySelector(`.nav-item[onclick="goTab('${name}')"]`);
-  if(navEl) navEl.classList.add('active');
-  const tabEl=document.getElementById('tab-'+name);
-  if(tabEl) tabEl.classList.add('active');
-  if(typeof closeSidebar==='function') closeSidebar();
+  document.querySelector(`[onclick="goTab('${name}')"]`).classList.add('active');
+  document.getElementById('tab-'+name).classList.add('active');
   if(name==='graphiques') setTimeout(renderGraphiques,80);
   if(name==='tendance') setTimeout(renderTendance,80);
   if(name==='production') setTimeout(renderProduction,80);
@@ -798,10 +812,8 @@ function renderTendance() {
 // ── PRODUCTION ──
 function setProdView(v) {
   prodView=v;
-  const bs=document.getElementById('btn-semaine'),bm=document.getElementById('btn-mois-p');
-  if(bs){{bs.classList.toggle('active',v==='semaine');bs.style.background=v==='semaine'?'var(--accent)':'';bs.style.color=v==='semaine'?'white':'';bs.style.borderColor=v==='semaine'?'var(--accent)':'';}}
-  if(bm){{bm.classList.toggle('active',v==='mois');bm.style.background=v==='mois'?'var(--accent)':'';bm.style.color=v==='mois'?'white':'';bm.style.borderColor=v==='mois'?'var(--accent)':'';}}
-  
+  document.getElementById('btn-semaine').classList.toggle('active',v==='semaine');
+  document.getElementById('btn-mois').classList.toggle('active',v==='mois');
   renderProduction();
 }
 
@@ -929,13 +941,7 @@ async function importAlobees(input) {
     const c=chantiers.find(x=>x.code===ref); if(!c) continue;
     const mois=parseInt(mStr),annee=parseInt(yStr);
     const{error}=await sb.from('heures_mois').upsert({chantier_id:c.id,mois,annee,heures:Math.round(h)},{onConflict:'chantier_id,mois,annee'});
-    if(!error){
-      if(!heuresMap[c.id])heuresMap[c.id]={};
-      heuresMap[c.id][mois]=Math.round(h);
-      if(!allHeuresMap[c.id])allHeuresMap[c.id]={};
-      allHeuresMap[c.id][`${mois}_${annee}`]=Math.round(h);
-      synced++;
-    }
+    if(!error){if(!heuresMap[c.id])heuresMap[c.id]={};heuresMap[c.id][mois]=Math.round(h);synced++;}
   }
   const th=newData.reduce((a,d)=>a+d.heures,0);
   const techs=new Set(newData.map(d=>d.technicien)).size;
@@ -962,25 +968,8 @@ async function importExcel(input) {
       const iCC=col(['code client']), iDon=col(['donneur']), iAdr=col(['adresse']), iVil=col(['ville']);
       const iBmo=col(['budget mo','budget main','budget (€)']), iBg=col(['budget global']), iMar=col(['montant marché','marche','marché']);
       const iOuv=col(['ouvrier','worker']);
-      // Month detection: must match exactly (not substring of 'marché')
-const colExact = names => {
-  const idx = hdrs.findIndex(h => names.some(n => h === n || h === n+'.' ));
-  return idx >= 0 ? idx : -1;
-};
-const iMois=[
-  colExact(['jan','janv','janvier']),
-  colExact(['fév','fev','fevr','février']),
-  colExact(['mar','mars']),
-  colExact(['avr','avri','avril','apr']),
-  colExact(['mai','may']),
-  colExact(['jun','juin','jui']),
-  colExact(['jul','juil','juillet']),
-  colExact(['aoû','aou','aout','août','aug']),
-  colExact(['sep','sept','septembre']),
-  colExact(['oct','octo','octobre']),
-  colExact(['nov','nove','novembre']),
-  colExact(['déc','dec','dece','décembre'])
-];
+      const colExact=names=>{const i=hdrs.findIndex(h=>names.some(n=>h===n));return i>=0?i:-1;};
+const iMois=[colExact(['jan','janv']),colExact(['fév','fev','fevr']),colExact(['mar','mars']),colExact(['avr','avril']),colExact(['mai','may']),colExact(['jun','juin']),colExact(['jul','juil']),colExact(['aoû','aou','aout']),colExact(['sep','sept']),colExact(['oct']),colExact(['nov']),colExact(['déc','dec'])]
       const dataRows=rows.slice(1).filter(r=>r[iCode]!=null&&String(r[iCode]).trim()!=='');
       if(!dataRows.length){showToast('Aucune ligne de données');return;}
       let added=0,updated=0,skipped=0;
@@ -1098,7 +1087,6 @@ document.addEventListener('input',e=>{if(e.target.classList.contains('col-filter
   const{data:{session}}=await sb.auth.getSession();
   if(session){currentUser=session.user;startApp();}
 })();
-
 </script>
 
 <script>
