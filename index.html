@@ -320,9 +320,10 @@ const sb = createClient(SB_URL, SB_KEY);
 const TAUX = 30;
 const ML = ['Jan','Fév','Mar','Avr','Mai','Jun','Jul','Aoû','Sep','Oct','Nov','Déc'];
 
-let chantiers = [], heuresMap = {}, alobeesData = [];
+let chantiers = [], heuresMap = {}, allHeuresMap = {}, alobeesData = [];
 let currentUser = null, currentAnnee = new Date().getFullYear();
 let prodView = 'semaine';
+let nbOuvriers = 5;
 let cPct=null,cMonth=null,cBudget=null,cTend=null,cDistrib=null,cProd=null,cCharge=null,cTech=null,cSites=null;
 
 // ── EXPOSE TO HTML ──
@@ -467,7 +468,8 @@ async function loadHeures() {
 const getH   = c => Array.from({length:12},(_,i)=>(heuresMap[c.id]||{})[i]||0);
 const budgetH = c => (c.budget||0)/TAUX;
 const totalH  = c => getH(c).reduce((a,b)=>a+b,0);
-const restH   = c => Math.max(0, budgetH(c)-totalH(c));
+const totalHAll = c => Object.values(allHeuresMap[c.id]||{}).reduce((a,b)=>a+b,0);
+const restH   = c => Math.max(0, budgetH(c)-totalHAll(c));
 const pct     = c => { const b=budgetH(c); return b>0?Math.min(100,Math.round(totalH(c)/b*100)):0; };
 const fmt     = n => Math.round(n).toLocaleString('fr-FR');
 const fmtE    = n => Math.round(n).toLocaleString('fr-FR')+' €';
@@ -628,6 +630,8 @@ async function updateMois(id, mois, val) {
   await sb.from('heures_mois').upsert({chantier_id:id,mois,annee:currentAnnee,heures:h},{onConflict:'chantier_id,mois,annee'});
   if(!heuresMap[id]) heuresMap[id]={};
   heuresMap[id][mois]=h;
+  if(!allHeuresMap[id]) allHeuresMap[id]={};
+  allHeuresMap[id][mois+'_'+currentAnnee]=h;
   renderMetrics(); renderTable(); showToast('✓');
 }
 
@@ -744,7 +748,9 @@ function wKey(d){const dt=new Date(d);dt.setHours(0,0,0,0);dt.setDate(dt.getDate
 function mKey(d){return `${ML[d.getMonth()]} ${d.getFullYear()}`;}
 
 function renderProduction() {
-  const prodOuvEl=document.getElementById('prod-ouv'); const nb=prodOuvEl?parseInt(prodOuvEl.value)||5:5;
+  const prodOuvEl=document.getElementById('prod-ouv');
+  if(prodOuvEl) nbOuvriers=parseInt(prodOuvEl.value)||5;
+  const nb=nbOuvriers;
   const H=39, capSem=nb*H, capMois=nb*H*4.33;
   const capPer=prodView==='semaine'?capSem:capMois;
   const actifsP=chantiers.filter(c=>!c.termine);
@@ -889,7 +895,8 @@ async function importExcel(input) {
       const iCC=col(['code client']), iDon=col(['donneur']), iAdr=col(['adresse']), iVil=col(['ville']);
       const iBmo=col(['budget mo','budget main','budget (€)']), iBg=col(['budget global']), iMar=col(['montant marché','marche','marché']);
       const iOuv=col(['ouvrier','worker']);
-      const iMois=[col(['jan']),col(['fév','fev']),col(['mar']),col(['avr','apr']),col(['mai','may']),col(['jun','jui']),col(['jul']),col(['aoû','aou','aug']),col(['sep']),col(['oct']),col(['nov']),col(['déc','dec'])];
+      const colExact=names=>{const i=hdrs.findIndex(h=>names.some(n=>h===n));return i>=0?i:-1;};
+      const iMois=[colExact(['jan','janv']),colExact(['fév','fev']),colExact(['mar','mars']),colExact(['avr','avril']),colExact(['mai','may']),colExact(['jun','juin']),colExact(['jul','juil']),colExact(['aoû','aou','aout']),colExact(['sep','sept']),colExact(['oct']),colExact(['nov']),colExact(['déc','dec'])]
       const dataRows=rows.slice(1).filter(r=>r[iCode]!=null&&String(r[iCode]).trim()!=='');
       if(!dataRows.length){showToast('Aucune ligne de données');return;}
       let added=0,updated=0,skipped=0;
