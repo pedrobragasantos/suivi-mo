@@ -189,7 +189,7 @@ tr:hover td{background:var(--surface2)}
               <th>Montant marché</th><th>Budget global</th><th>Budget MO</th>
               <th>H. budgétées</th><th>Ouvriers</th><th>H. effectuées</th>
               <th>H. restantes</th><th>Avancement</th><th>MO consommé</th>
-              <th>Ratio BudgetGlobal/Marché</th><th></th>
+              <th>Ratio</th><th>Durée restante</th><th>✓ Terminé</th><th></th>
             </tr></thead>
             <tbody id="tbl-body"></tbody>
           </table>
@@ -328,7 +328,8 @@ let cPct=null,cMonth=null,cBudget=null,cTend=null,cDistrib=null,cProd=null,cChar
 // ── EXPOSE TO HTML ──
 const expose = (fns) => fns.forEach(([k,v]) => window[k]=v);
 expose([
-  ['doAuth', doAuth], ['setAuthMode', setAuthMode], ['doLogout', doLogout],
+  ['doAuth', doAuth],
+  ['toggleTermine', toggleTermine], ['setAuthMode', setAuthMode], ['doLogout', doLogout],
   ['goTab', goTab], ['openModal', openModal], ['closeModal', closeModal],
   ['saveChantier', saveChantier], ['updateField', updateField], ['updateMois', updateMois],
   ['deleteChantier', deleteChantier], ['renderTable', renderTable], ['loadHeures', loadHeures],
@@ -482,9 +483,9 @@ function ratioColor(r) {
 function ratioCell(c) {
   const m=c.montant_marche||0, bg=c.budget_global||0;
   if (!m) return '<span style="color:var(--text3)">—</span>';
-  const r=bg/m, pct=(r*100).toFixed(1), col=ratioColor(r);
+  const r=bg/m, val=r.toFixed(3), col=ratioColor(r);
   const lbl=r<=0.55?'OK':r<=0.70?'Attention':'Dépassement';
-  return `<span style="font-family:'DM Mono',monospace;font-weight:600;color:${col}">${pct}%</span> <span style="font-size:10px;color:${col}">${lbl}</span>`;
+  return `<span style="font-family:'DM Mono',monospace;font-weight:600;color:${col}">${val}</span> <span style="font-size:10px;color:${col}">${lbl}</span>`;
 }
 
 // ── RENDER ALL ──
@@ -497,13 +498,44 @@ function renderMetrics() {
   const tM=chantiers.reduce((a,c)=>a+(c.montant_marche||0),0);
   const tG=chantiers.reduce((a,c)=>a+(c.budget_global||0),0);
   const avg=chantiers.length?Math.round(chantiers.reduce((a,c)=>a+pct(c),0)/chantiers.length):0;
+  const enCours = chantiers.filter(c => !c.termine);
+  const tMec = enCours.reduce((a,c)=>a+(c.montant_marche||0),0);
+  const tGec = enCours.reduce((a,c)=>a+(c.budget_global||0),0);
+  const tBec = enCours.reduce((a,c)=>a+(c.budget||0),0);
+  const tBHec = enCours.reduce((a,c)=>a+budgetH(c),0);
+  const tHec = enCours.reduce((a,c)=>a+totalH(c),0);
+  const anneeLabel = currentAnnee || new Date().getFullYear();
   document.getElementById('metrics').innerHTML=`
-    <div class="metric-card"><div class="metric-label">Chantiers</div><div class="metric-value">${chantiers.length}</div></div>
-    <div class="metric-card"><div class="metric-label">Montant marchés</div><div class="metric-value">${fmtE(tM)}</div></div>
-    <div class="metric-card"><div class="metric-label">Budget global</div><div class="metric-value">${fmtE(tG)}</div></div>
-    <div class="metric-card"><div class="metric-label">Budget MO</div><div class="metric-value">${fmtE(tB)}</div><div class="metric-sub">${fmt(tBH)} h budgétées</div></div>
-    <div class="metric-card"><div class="metric-label">H. réalisées</div><div class="metric-value">${fmt(tH)} h</div><div class="metric-sub">${fmtE(tH*TAUX)}</div></div>
-    <div class="metric-card"><div class="metric-label">Avancement moyen</div><div class="metric-value">${avg}%</div><div class="metric-sub">${fmtE(chantiers.reduce((a,c)=>a+restH(c)*TAUX,0))} restants</div></div>`;
+    <div class="metric-card">
+      <div class="metric-label">Chantiers</div>
+      <div class="metric-value">${chantiers.length}</div>
+      <div class="metric-sub">${enCours.length} en cours · ${chantiers.length-enCours.length} terminés</div>
+    </div>
+    <div class="metric-card">
+      <div class="metric-label">Montant marchés en cours</div>
+      <div class="metric-value">${fmtE(tMec)}</div>
+      <div class="metric-sub">Total tous : ${fmtE(tM)}</div>
+    </div>
+    <div class="metric-card">
+      <div class="metric-label">Budget global en cours</div>
+      <div class="metric-value">${fmtE(tGec)}</div>
+      <div class="metric-sub">Total tous : ${fmtE(tG)}</div>
+    </div>
+    <div class="metric-card">
+      <div class="metric-label">Budget MO en cours</div>
+      <div class="metric-value">${fmtE(tBec)}</div>
+      <div class="metric-sub">${fmt(tBHec)} h budgétées en cours</div>
+    </div>
+    <div class="metric-card">
+      <div class="metric-label">H. réalisées ${anneeLabel}</div>
+      <div class="metric-value">${fmt(tH)} h</div>
+      <div class="metric-sub">En cours : ${fmt(tHec)} h · ${fmtE(tH*TAUX)}</div>
+    </div>
+    <div class="metric-card">
+      <div class="metric-label">Avancement moyen</div>
+      <div class="metric-value">${avg}%</div>
+      <div class="metric-sub">${fmtE(enCours.reduce((a,c)=>a+restH(c)*TAUX,0))} restants en cours</div>
+    </div>`;
 }
 
 function renderTable() {
@@ -519,17 +551,18 @@ function renderTable() {
   if(!list.length){tbody.innerHTML='<tr><td colspan="16"><div class="empty">Aucun chantier trouvé</div></td></tr>';return;}
   tbody.innerHTML=list.map(c=>{
     const bh=budgetH(c),th=totalH(c),rh=restH(c),p=pct(c);
-    return `<tr>
+    const rowStyle=c.termine?'opacity:0.55;background:var(--surface2);':'';
+    return `<tr style="${rowStyle}">
       <td class="code-cell">${c.code}</td>
       <td style="color:var(--text2);font-family:'DM Mono',monospace;font-size:12px">${c.code_client||'—'}</td>
       <td>${c.donneur||''}</td>
       <td>${c.adresse||''}</td>
       <td>${c.ville||''}</td>
-      <td><input class="editable" type="number" value="${c.montant_marche||0}" style="width:95px" onchange="updateField('${c.id}','montant_marche',this.value)"> €</td>
-      <td><input class="editable" type="number" value="${c.budget_global||0}" style="width:95px" onchange="updateField('${c.id}','budget_global',this.value)"> €</td>
-      <td><input class="editable" type="number" value="${c.budget||0}" style="width:85px" onchange="updateField('${c.id}','budget',this.value)"> €</td>
+      <td><input class="editable" type="number" value="${c.montant_marche||0}" style="width:110px" onchange="updateField('${c.id}','montant_marche',this.value)"> €</td>
+      <td><input class="editable" type="number" value="${c.budget_global||0}" style="width:110px" onchange="updateField('${c.id}','budget_global',this.value)"> €</td>
+      <td><input class="editable" type="number" value="${c.budget||0}" style="width:110px" onchange="updateField('${c.id}','budget',this.value)"> €</td>
       <td style="font-family:'DM Mono',monospace">${fmt(bh)} h</td>
-      <td><input class="editable" type="number" value="${c.ouvriers||1}" style="width:45px" onchange="updateField('${c.id}','ouvriers',this.value)"></td>
+      <td><input class="editable" type="number" value="${c.ouvriers||1}" style="width:55px" onchange="updateField('${c.id}','ouvriers',this.value)"></td>
       <td style="font-family:'DM Mono',monospace;font-weight:600">${fmt(th)} h</td>
       <td style="font-family:'DM Mono',monospace;color:${rh===0?'var(--red)':'var(--text)'}">${fmt(rh)} h</td>
       <td><div style="display:flex;align-items:center;gap:6px;min-width:110px">
@@ -537,6 +570,13 @@ function renderTable() {
         <span class="badge ${badgeCls(p)}">${p}%</span></div></td>
       <td style="font-family:'DM Mono',monospace">${fmtE(th*TAUX)}</td>
       <td>${ratioCell(c)}</td>
+      <td style="font-family:'DM Mono',monospace;font-size:12px;white-space:nowrap;">${dureeRestante(c)}</td>
+      <td style="text-align:center;">
+        <input type="checkbox" ${c.termine?'checked':''} 
+          onchange="toggleTermine('${c.id}',this.checked)"
+          title="Marquer comme terminé"
+          style="width:16px;height:16px;cursor:pointer;">
+      </td>
       <td><button class="del-btn" onclick="deleteChantier('${c.id}')">✕</button></td>
     </tr>`;
   }).join('');
@@ -544,12 +584,35 @@ function renderTable() {
 
 function renderMonthTable() {
   const tbody=document.getElementById('mois-body');
-  if(!chantiers.length){tbody.innerHTML='<tr><td colspan="16"><div class="empty">Aucun chantier</div></td></tr>';return;}
-  tbody.innerHTML=chantiers.map(c=>{
+  const actifsMois=chantiers.filter(c=>!c.termine);
+  if(!actifsMois.length){tbody.innerHTML='<tr><td colspan="16"><div class="empty">Aucun chantier en cours</div></td></tr>';return;}
+  tbody.innerHTML=actifsMois.map(c=>{
     const hrs=getH(c),th=totalH(c),p=pct(c);
     const cols=hrs.map((h,i)=>`<td><input class="month-input" type="number" value="${h}" min="0" onchange="updateMois('${c.id}',${i},this.value)"></td>`).join('');
     return `<tr><td class="code-cell">${c.code}</td><td>${c.ville||''}</td>${cols}<td style="font-family:'DM Mono',monospace;font-weight:600">${fmt(th)} h</td><td><span class="badge ${badgeCls(p)}">${p}%</span></td></tr>`;
   }).join('');
+}
+
+
+// ── DURÉE RESTANTE & TERMINÉ ──
+function dureeRestante(c) {
+  if (c.termine) return '<span style="color:var(--green);font-size:11px">✅ Terminé</span>';
+  const rh = restH(c);
+  if (rh <= 0) return '<span style="color:var(--green);font-size:11px">✅ Fini</span>';
+  const ouv = c.ouvriers || 1;
+  const h_par_jour = 8; // journée standard 8h
+  const jours = rh / (ouv * h_par_jour);
+  if (jours < 1) return '<span style="color:var(--amber);font-size:11px">&lt; 1 jour</span>';
+  return `<span style="font-size:12px">${jours.toFixed(1)} j</span>`;
+}
+
+async function toggleTermine(id, checked) {
+  const { error } = await sb.from('chantiers').update({ termine: checked }).eq('id', id);
+  if (error) { showToast('Erreur : ' + error.message); return; }
+  const c = chantiers.find(x => x.id === id);
+  if (c) c.termine = checked;
+  renderAll();
+  showToast(checked ? 'Chantier marqué terminé ✅' : 'Chantier réouvert 🔄');
 }
 
 // ── CRUD ──
@@ -629,10 +692,11 @@ function goTab(name) {
 // ── GRAPHIQUES ──
 function destroyChart(ref) { if(ref) { try{ref.destroy()}catch(e){} } return null; }
 function renderGraphiques() {
-  const codes=chantiers.map(c=>c.code), pcts=chantiers.map(c=>pct(c));
-  const monthTot=ML.map((_,i)=>chantiers.reduce((a,c)=>a+getH(c)[i],0));
-  const consumed=chantiers.map(c=>Math.round(totalH(c)*TAUX));
-  const remaining=chantiers.map(c=>Math.round(restH(c)*TAUX));
+  const actifsG=chantiers.filter(c=>!c.termine);
+  const codes=actifsG.map(c=>c.code), pcts=actifsG.map(c=>pct(c));
+  const monthTot=ML.map((_,i)=>actifsG.reduce((a,c)=>a+getH(c)[i],0));
+  const consumed=actifsG.map(c=>Math.round(totalH(c)*TAUX));
+  const remaining=actifsG.map(c=>Math.round(restH(c)*TAUX));
   const h1=Math.max(200,chantiers.length*40+80);
   document.getElementById('wrap-pct').style.height=h1+'px';
   document.getElementById('wrap-budget').style.height=h1+'px';
@@ -646,20 +710,20 @@ function renderGraphiques() {
 
 // ── TENDANCE ──
 function renderTendance() {
-  const wM=chantiers.filter(c=>c.montant_marche>0);
+  const wM=chantiers.filter(c=>c.montant_marche>0&&!c.termine);
   const codes=wM.map(c=>c.code), ratios=wM.map(c=>parseFloat(((c.budget_global||0)/c.montant_marche*100).toFixed(1)));
   const h1=Math.max(220,wM.length*40+80);
   document.getElementById('wrap-tend').style.height=h1+'px';
   cTend=destroyChart(cTend);
-  cTend=new Chart(document.getElementById('cTend'),{type:'bar',data:{labels:codes,datasets:[{label:'Ratio BudgetGlobal/Marché (%)',data:ratios,backgroundColor:ratios.map(r=>ratioColor(r/100)),borderRadius:5}]},options:{indexAxis:'y',responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false},tooltip:{callbacks:{label:ctx=>` ${ctx.raw}% du marché`}}},scales:{x:{min:0,max:Math.max(100,...ratios)+5,ticks:{callback:v=>v+'%'},grid:{color:'rgba(0,0,0,.05)'}},y:{grid:{display:false}}}}});
+  cTend=new Chart(document.getElementById('cTend'),{type:'bar',data:{labels:codes,datasets:[{label:'Ratio BudgetGlobal/Marché (%)',data:ratios,backgroundColor:ratios.map(r=>ratioColor(r/100)),borderRadius:5}]},options:{indexAxis:'y',responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false},tooltip:{callbacks:{label:ctx=>` ratio : ${ctx.raw}`}}},scales:{x:{min:0,max:Math.max(1,...ratios)+0.05,ticks:{callback:v=>v.toFixed(2)},grid:{color:'rgba(0,0,0,.05)'}},y:{grid:{display:false}}}}});
   const ok=wM.filter(c=>(c.budget_global||0)/c.montant_marche<.55).length;
   const warn=wM.filter(c=>{const r=(c.budget_global||0)/c.montant_marche;return r>=.55&&r<.70;}).length;
   const over=wM.filter(c=>(c.budget_global||0)/c.montant_marche>=.70).length;
   cDistrib=destroyChart(cDistrib);
   cDistrib=new Chart(document.getElementById('cDistrib'),{type:'doughnut',data:{labels:['OK (<55%)','Vigilance (55–70%)','Dépassement (>70%)'],datasets:[{data:[ok,warn,over],backgroundColor:['#1d7a52','#d97706','#c53030'],borderWidth:2,borderColor:'#fff'}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'bottom',labels:{boxWidth:12,font:{size:11},padding:10}}}}});
-  const total=wM.length, avg=total?(wM.reduce((a,c)=>a+(c.budget_global||0)/c.montant_marche,0)/total*100).toFixed(1):0;
+  const total=wM.length, avg=total?(wM.reduce((a,c)=>a+(c.budget_global||0)/c.montant_marche,0)/total).toFixed(3):0;
   document.getElementById('synthese').innerHTML=`
-    <div style="margin-bottom:1rem"><div style="font-size:11px;color:var(--text2);margin-bottom:4px">Ratio moyen MO/Marché</div><div style="font-size:28px;font-weight:600;font-family:'DM Mono',monospace;color:${ratioColor(avg/100)}">${avg}%</div></div>
+    <div style="margin-bottom:1rem"><div style="font-size:11px;color:var(--text2);margin-bottom:4px">Ratio moyen MO/Marché</div><div style="font-size:28px;font-weight:600;font-family:'DM Mono',monospace;color:${ratioColor(parseFloat(avg))}">${avg}</div></div>
     <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px">
       <div style="text-align:center;padding:10px;background:#e6f4ee;border-radius:8px"><div style="font-size:20px;font-weight:600;color:#1d7a52">${ok}</div><div style="font-size:10px;color:#1d7a52">OK</div></div>
       <div style="text-align:center;padding:10px;background:#fdf3dc;border-radius:8px"><div style="font-size:20px;font-weight:600;color:#d97706">${warn}</div><div style="font-size:10px;color:#d97706">Vigilance</div></div>
@@ -680,10 +744,11 @@ function wKey(d){const dt=new Date(d);dt.setHours(0,0,0,0);dt.setDate(dt.getDate
 function mKey(d){return `${ML[d.getMonth()]} ${d.getFullYear()}`;}
 
 function renderProduction() {
-  const nb=parseInt(document.getElementById('prod-ouv').value)||5;
+  const prodOuvEl=document.getElementById('prod-ouv'); const nb=prodOuvEl?parseInt(prodOuvEl.value)||5:5;
   const H=39, capSem=nb*H, capMois=nb*H*4.33;
   const capPer=prodView==='semaine'?capSem:capMois;
-  const totalR=chantiers.reduce((a,c)=>a+restH(c),0);
+  const actifsP=chantiers.filter(c=>!c.termine);
+  const totalR=actifsP.reduce((a,c)=>a+restH(c),0);
   const now=new Date(), il4=new Date(now-28*86400000);
   const recent=alobeesData.filter(d=>d.date>=il4);
   const rythme=recent.reduce((a,d)=>a+d.heures,0)/4;
