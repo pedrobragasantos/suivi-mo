@@ -450,6 +450,12 @@ async function loadAlobees() {
 async function loadChantiers() {
   const { data } = await sb.from('chantiers').select('*').order('code', { ascending: true });
   chantiers = data || [];
+  const { data: allH } = await sb.from('heures_mois').select('*');
+  allHeuresMap = {};
+  (allH||[]).forEach(r => {
+    if (!allHeuresMap[r.chantier_id]) allHeuresMap[r.chantier_id] = {};
+    allHeuresMap[r.chantier_id][r.mois+'_'+r.annee] = r.heures;
+  });
   renderAll();
 }
 
