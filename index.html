@@ -476,7 +476,7 @@ const budgetH = c => (c.budget||0)/TAUX;
 const totalH  = c => getH(c).reduce((a,b)=>a+b,0);
 const totalHAll = c => Object.values(allHeuresMap[c.id]||{}).reduce((a,b)=>a+b,0);
 const restH   = c => Math.max(0, budgetH(c)-totalHAll(c));
-const pct     = c => { const b=budgetH(c); return b>0?Math.min(100,Math.round(totalH(c)/b*100)):0; };
+const pct     = c => { const b=budgetH(c); return b>0?Math.min(100,Math.round(totalHAll(c)/b*100)):0; };
 const fmt     = n => Math.round(n).toLocaleString('fr-FR');
 const fmtE    = n => Math.round(n).toLocaleString('fr-FR')+' €';
 const badgeCls= p => p>=100?'badge-over':p>=75?'badge-warn':'badge-ok';
